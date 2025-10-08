@@ -5,6 +5,31 @@
         "projectId": "db20855d-c035-4dc3-888a-2f050bfef1eb"
       }
     },
-    "owner": "zennicy"
+    "owner": "zennicy",
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
+        }
+      ]
+    ],
+    "android": {
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "ios": {
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app needs Bluetooth to connect to your water tracking device",
+        "NSBluetoothPeripheralUsageDescription": "This app needs Bluetooth to connect to your water tracking device"
+      }
+    }
   }
 }
