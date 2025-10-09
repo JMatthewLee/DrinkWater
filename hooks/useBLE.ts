@@ -1,239 +1,236 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { BLEDevice, BLEConnectionState, BLEData } from '../types/ble.types';
-import BLEManagerService from '../services/BLEManager';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BleManager, Device, State, Characteristic } from 'react-native-ble-plx';
+import { Platform, PermissionsAndroid, Alert, NativeModules } from 'react-native';
+
+type BLEConnectionState = 'idle' | 'scanning' | 'connecting' | 'connected' | 'disconnected';
+
+export interface BLEDevice {
+  id: string;
+  name: string | null;
+  rssi: number;
+}
+
+interface UseBLEOptions {
+  onWaterMl?: (milliliters: number) => void;
+  serviceUUID: string;
+  waterCharacteristicUUID: string;
+}
 
 interface UseBLEReturn {
   devices: BLEDevice[];
   connectionState: BLEConnectionState;
   connectedDevice: BLEDevice | null;
-  dataStream: BLEData[];
-  batteryLevel: number | null;
   error: string | null;
   scanForDevices: () => Promise<void>;
   connectToDevice: (id: string) => Promise<void>;
   disconnect: () => Promise<void>;
-  sendCommand: (cmd: string) => Promise<void>;
-  clearError: () => void;
-  clearDataStream: () => void;
 }
 
-export const useBLE = (): UseBLEReturn => {
+function base64DecodeUtf8(b64: string): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Buf: any = (global as unknown as { Buffer?: any }).Buffer;
+    if (Buf) {
+      return Buf.from(b64, 'base64').toString('utf8');
+    }
+  } catch {}
+
+  try {
+    // @ts-ignore - atob may exist at runtime
+    const binary = globalThis.atob ? globalThis.atob(b64) : '';
+    return decodeURIComponent(
+      binary
+        .split('')
+        .map((c: string) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+  } catch {
+    return '';
+  }
+}
+
+function tryParseMlFromMessage(message: string): number | null {
+  if (!message) return null;
+  const mlMatch = message.match(/ML:(\d+)/);
+  if (mlMatch && mlMatch[1]) {
+    const ml = parseInt(mlMatch[1], 10);
+    if (!Number.isNaN(ml) && ml > 0) return ml;
+  }
+  return null;
+}
+
+export function useBLE(options: UseBLEOptions): UseBLEReturn {
+  const { onWaterMl, serviceUUID, waterCharacteristicUUID } = options;
+
+  const managerRef = useRef<BleManager | null>(null);
   const [devices, setDevices] = useState<BLEDevice[]>([]);
   const [connectionState, setConnectionState] = useState<BLEConnectionState>('idle');
   const [connectedDevice, setConnectedDevice] = useState<BLEDevice | null>(null);
-  const [dataStream, setDataStream] = useState<BLEData[]>([]);
-  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // Use ref to track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef<boolean>(true);
 
-  // Safe state update function that checks if component is still mounted
-  const safeSetState = useCallback(<T>(setter: React.Dispatch<React.SetStateAction<T>>) => {
-    return (value: React.SetStateAction<T>) => {
-      if (isMountedRef.current) {
-        setter(value);
-      }
-    };
-  }, []);
-
-  const handleDevicesUpdated = useCallback((updatedDevices: BLEDevice[]) => {
-    if (isMountedRef.current) {
-      setDevices(updatedDevices);
-    }
-  }, []);
-
-  const handleStateChanged = useCallback((state: BLEConnectionState) => {
-    if (!isMountedRef.current) return;
-    
-    setConnectionState(state);
-    if (state === 'connected') {
-      const device = BLEManagerService.getConnectedDevice();
-      if (device) {
-        setConnectedDevice(device);
-      }
-    } else if (state === 'disconnected' || state === 'idle') {
-      setConnectedDevice(null);
-    }
-  }, []);
-
-  const handleDataReceived = useCallback((data: BLEData) => {
-    if (!isMountedRef.current) return;
-    
-    setDataStream(prev => {
-      const newStream = [data, ...prev];
-      return newStream.slice(0, 20); // Keep only last 20 messages
-    });
-  }, []);
-
-  const handleError = useCallback((error: unknown) => {
-    if (!isMountedRef.current) return;
-    
-    const errorMessage = error instanceof Error ? error.message : 'BLE Error occurred';
-    setError(errorMessage);
-    console.error('BLE Error:', error);
-  }, []);
-
-  const handleDeviceConnected = useCallback((device: { id: string; name?: string | null; rssi?: number | null }) => {
-    if (!isMountedRef.current) return;
-    
-    setConnectedDevice({
-      id: device.id,
-      name: device.name ?? 'Connected Device',
-      rssi: device.rssi ?? 0,
-    });
-  }, []);
-
-  const handleDeviceDisconnected = useCallback(() => {
-    if (!isMountedRef.current) return;
-    
-    setConnectedDevice(null);
-    setDataStream([]);
-    setBatteryLevel(null);
-  }, []);
-
-  const handleBatteryLevelReceived = useCallback((level: number) => {
-    if (!isMountedRef.current) return;
-    
-    setBatteryLevel(level);
-  }, []);
-
   useEffect(() => {
-    // Set up event listeners
-    BLEManagerService.on('devicesUpdated', handleDevicesUpdated);
-    BLEManagerService.on('stateChanged', handleStateChanged);
-    BLEManagerService.on('dataReceived', handleDataReceived);
-    BLEManagerService.on('error', handleError);
-    BLEManagerService.on('deviceConnected', handleDeviceConnected);
-    BLEManagerService.on('deviceDisconnected', handleDeviceDisconnected);
-    BLEManagerService.on('batteryLevelReceived', handleBatteryLevelReceived);
+    // Guard: react-native-ble-plx requires a native module that is NOT present in Expo Go.
+    // On unsupported environments, surface a helpful error and do not instantiate BleManager.
+    const hasNativeBLE = Boolean((NativeModules as unknown as { BleClientManager?: unknown }).BleClientManager);
+    if (!hasNativeBLE) {
+      setError('Bluetooth not available in this build. Install a Development Build (expo-dev-client) to use BLE.');
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
 
-    // Initialize BLE with proper error handling
-    const initializeBLE = async (): Promise<void> => {
-      try {
-        await BLEManagerService.initializeBLE();
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to initialize BLE';
-        if (isMountedRef.current) {
-          setError(errorMessage);
-        }
-      }
-    };
-
-    initializeBLE();
+    managerRef.current = new BleManager();
+    const sub = managerRef.current.onStateChange((state: State) => {
+      if (!isMountedRef.current) return;
+      if (state === 'PoweredOn') setConnectionState('idle');
+      else setConnectionState('disconnected');
+    }, true);
 
     return () => {
-      // Mark component as unmounted
       isMountedRef.current = false;
-      
-      // Cleanup event listeners
-      BLEManagerService.off('devicesUpdated', handleDevicesUpdated);
-      BLEManagerService.off('stateChanged', handleStateChanged);
-      BLEManagerService.off('dataReceived', handleDataReceived);
-      BLEManagerService.off('error', handleError);
-      BLEManagerService.off('deviceConnected', handleDeviceConnected);
-      BLEManagerService.off('deviceDisconnected', handleDeviceDisconnected);
-      BLEManagerService.off('batteryLevelReceived', handleBatteryLevelReceived);
+      sub.remove();
+      try {
+        managerRef.current?.stopDeviceScan();
+      } catch {}
+      managerRef.current?.destroy();
+      managerRef.current = null;
     };
-  }, [
-    handleDevicesUpdated,
-    handleStateChanged,
-    handleDataReceived,
-    handleError,
-    handleDeviceConnected,
-    handleDeviceDisconnected,
-    handleBatteryLevelReceived,
-  ]);
+  }, []);
 
-  const scanForDevices = useCallback(async (): Promise<void> => {
-    if (!isMountedRef.current) return;
-    
+  const requestPermissions = useCallback(async () => {
+    if (Platform.OS !== 'android') return;
     try {
-      setError(null);
-      setDevices([]);
-      await BLEManagerService.startScan();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to start scanning';
-      if (isMountedRef.current) {
-        setError(errorMessage);
-      }
+      const permissions = [
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      ];
+      await PermissionsAndroid.requestMultiple(permissions);
+    } catch (e) {
+      setError('Failed to request Bluetooth permissions');
     }
   }, []);
 
-  const connectToDevice = useCallback(async (id: string): Promise<void> => {
-    if (!isMountedRef.current) return;
-    
+  const scanForDevices = useCallback(async () => {
+    if (!managerRef.current) return;
+    setError(null);
+    setDevices([]);
+    setConnectionState('scanning');
+    await requestPermissions();
+
     try {
-      setError(null);
-      await BLEManagerService.connectToDevice(id);
-      
-      // Subscribe to notifications after successful connection
-      await BLEManagerService.subscribeToNotifications((data: string) => {
-        console.log('Received data:', data);
+      managerRef.current.startDeviceScan([serviceUUID], { allowDuplicates: false }, (err, device) => {
+        if (!isMountedRef.current) return;
+        if (err) {
+          setError(err.message);
+          setConnectionState('idle');
+          return;
+        }
+        if (device) {
+          setDevices(prev => {
+            const simple: BLEDevice = {
+              id: device.id,
+              name: device.name ?? 'Unknown Device',
+              rssi: device.rssi ?? 0,
+            };
+            const next = [...prev];
+            const idx = next.findIndex(d => d.id === simple.id);
+            if (idx >= 0) next[idx] = simple; else next.push(simple);
+            next.sort((a, b) => (b.rssi || 0) - (a.rssi || 0));
+            return next;
+          });
+        }
       });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to connect to device';
-      if (isMountedRef.current) {
-        setError(errorMessage);
-      }
+      setTimeout(() => {
+        try { managerRef.current?.stopDeviceScan(); } catch {}
+        if (isMountedRef.current) setConnectionState('idle');
+      }, 10000);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to start scanning');
+      setConnectionState('idle');
     }
-  }, []);
+  }, [requestPermissions]);
 
-  const disconnect = useCallback(async (): Promise<void> => {
-    if (!isMountedRef.current) return;
-    
+  const connectToDevice = useCallback(async (id: string) => {
+    if (!managerRef.current) return;
+    setError(null);
+    setConnectionState('connecting');
     try {
-      setError(null);
-      await BLEManagerService.disconnectDevice();
-      if (isMountedRef.current) {
-        setDataStream([]);
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to disconnect';
-      if (isMountedRef.current) {
-        setError(errorMessage);
-      }
-    }
-  }, []);
+      const device = await managerRef.current.connectToDevice(id, { autoConnect: false, timeout: 15000 });
+      await device.discoverAllServicesAndCharacteristics();
 
-  const sendCommand = useCallback(async (cmd: string): Promise<void> => {
-    if (!isMountedRef.current) return;
-    
+      if (!isMountedRef.current) return;
+      setConnectedDevice({ id: device.id, name: device.name ?? 'Device', rssi: device.rssi ?? 0 });
+      setConnectionState('connected');
+
+      // Find the matching service and characteristic
+      const services = await device.services();
+      const targetService = services.find(s => (s.uuid || '').toLowerCase() === serviceUUID.toLowerCase());
+      if (!targetService) {
+        throw new Error('Required BLE service not found');
+      }
+      const characteristics = await targetService.characteristics();
+      const targetChar = characteristics.find(c => (c.uuid || '').toLowerCase() === waterCharacteristicUUID.toLowerCase());
+      if (!targetChar) {
+        throw new Error('Required BLE characteristic not found');
+      }
+
+      targetChar.monitor((err: Error | null, characteristic: Characteristic | null) => {
+        if (!isMountedRef.current) return;
+        if (err) {
+          setError(err.message);
+          return;
+        }
+        const value = characteristic?.value;
+        if (!value) return;
+        const text = base64DecodeUtf8(value);
+        const ml = tryParseMlFromMessage(text);
+        if (ml && onWaterMl) {
+          onWaterMl(ml);
+        }
+      });
+
+      device.onDisconnected(() => {
+        if (!isMountedRef.current) return;
+        setConnectionState('disconnected');
+        setConnectedDevice(null);
+      });
+    } catch (e: any) {
+      setError(e?.message || 'Failed to connect');
+      setConnectionState('disconnected');
+    }
+  }, [onWaterMl, serviceUUID, waterCharacteristicUUID]);
+
+  const disconnect = useCallback(async () => {
+    if (!managerRef.current) return;
     try {
-      setError(null);
-      await BLEManagerService.sendCommand(cmd);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to send command';
+      const id = connectedDevice?.id;
+      if (id) {
+        const device = await managerRef.current.devices([id]);
+        if (device && device[0]) {
+          await device[0].cancelConnection();
+        }
+      }
+    } catch (e) {
+      // ignore
+    } finally {
       if (isMountedRef.current) {
-        setError(errorMessage);
+        setConnectedDevice(null);
+        setConnectionState('disconnected');
       }
     }
-  }, []);
-
-  const clearError = useCallback((): void => {
-    if (isMountedRef.current) {
-      setError(null);
-    }
-  }, []);
-
-  const clearDataStream = useCallback((): void => {
-    if (isMountedRef.current) {
-      setDataStream([]);
-    }
-  }, []);
+  }, [connectedDevice]);
 
   return {
     devices,
     connectionState,
     connectedDevice,
-    dataStream,
-    batteryLevel,
     error,
     scanForDevices,
     connectToDevice,
     disconnect,
-    sendCommand,
-    clearError,
-    clearDataStream,
   };
-};
+}
+
+

@@ -2,7 +2,7 @@
  * Home Screen - Main water logging interface
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -20,6 +20,8 @@ import {
   Snackbar,
 } from 'react-native-paper';
 import { useWaterTracking } from '../../context/WaterTrackingContext';
+import { useBLE } from '../../hooks/useBLE';
+import { config } from '../../config';
 import ProgressCircle from '../../components/water/ProgressCircle';
 import QuickAddButtons from '../../components/water/QuickAddButtons';
 import StreakCounter from '../../components/water/StreakCounter';
@@ -43,6 +45,17 @@ const HomeScreen: React.FC = () => {
   const [note, setNote] = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
+
+  // BLE integration: when device sends ML:###, add a water log
+  const handleWaterReading = useCallback((ml: number) => {
+    addWaterLog(ml, undefined, 'ble');
+  }, [addWaterLog]);
+
+  const ble = useBLE({
+    onWaterMl: handleWaterReading,
+    serviceUUID: config.ble.serviceUUID,
+    waterCharacteristicUUID: config.ble.WATER_CHARACTERISTIC_UUID,
+  });
 
   const todayProgress = getTodayProgress(logs, settings.dailyGoalMl);
   const todayLogs = getLogsForDate(logs, new Date());
@@ -128,7 +141,7 @@ const HomeScreen: React.FC = () => {
           />
         </View>
 
-        {/* Quick Add Buttons */}
+        {/* Quick Add Buttons and BLE controls */}
         <Card style={styles.card}>
           <Card.Content>
             <Text style={styles.sectionTitle}>Quick Add</Text>
@@ -138,6 +151,38 @@ const HomeScreen: React.FC = () => {
               onAdd={handleQuickAdd}
               isLoading={isLoading}
             />
+            <View style={{ marginTop: 12 }}>
+              <Button
+                mode="outlined"
+                onPress={() => ble.scanForDevices()}
+                disabled={ble.connectionState === 'scanning'}
+              >
+                {ble.connectionState === 'scanning' ? 'Scanning...' : 'Scan for Devices'}
+              </Button>
+              {ble.error && (
+                <Text style={{ color: '#b91c1c', marginTop: 8 }}>{ble.error}</Text>
+              )}
+              {ble.devices.length > 0 && (
+                <View style={{ marginTop: 8 }}>
+                  {ble.devices.slice(0, 3).map((d) => (
+                    <View key={d.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text>{d.name} ({d.rssi} dBm)</Text>
+                      <Button mode="text" onPress={() => ble.connectToDevice(d.id)} disabled={ble.connectionState === 'connecting' || ble.connectionState === 'connected'}>
+                        {ble.connectionState === 'connecting' ? 'Connecting...' : 'Connect'}
+                      </Button>
+                    </View>
+                  ))}
+                </View>
+              )}
+              {ble.connectedDevice && (
+                <View style={{ marginTop: 8 }}>
+                  <Text>Connected to {ble.connectedDevice.name}</Text>
+                  <Button mode="text" onPress={() => ble.disconnect()}>
+                    Disconnect
+                  </Button>
+                </View>
+              )}
+            </View>
           </Card.Content>
         </Card>
 
