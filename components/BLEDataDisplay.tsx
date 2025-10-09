@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   ScrollView,
   View,
@@ -12,12 +12,14 @@ import {
   Text,
   IconButton,
   Divider,
+  Chip,
 } from 'react-native-paper';
 import { BLEData } from '../types/ble.types';
+import { formatWaterData, formatStatusData, ParsedData } from '../utils/dataParser';
 
 interface BLEDataDisplayProps {
   dataStream: BLEData[];
-  onSendCommand: (command: string) => void;
+  onSendCommand: (command: string) => Promise<void>;
   onClearData: () => void;
 }
 
@@ -26,43 +28,89 @@ const BLEDataDisplay: React.FC<BLEDataDisplayProps> = ({
   onSendCommand,
   onClearData,
 }) => {
-  const [command, setCommand] = useState('');
+  const [command, setCommand] = useState<string>('');
+  const [isSending, setIsSending] = useState<boolean>(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     // Auto-scroll to bottom when new data arrives
     if (dataStream.length > 0) {
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
+      
+      return () => clearTimeout(timeoutId);
     }
   }, [dataStream]);
 
-  const handleSendCommand = () => {
-    if (command.trim()) {
-      onSendCommand(command.trim());
+  const handleSendCommand = useCallback(async (): Promise<void> => {
+    const trimmedCommand = command.trim();
+    if (!trimmedCommand || isSending) return;
+    
+    try {
+      setIsSending(true);
+      await onSendCommand(trimmedCommand);
       setCommand('');
+    } catch (error) {
+      console.error('Failed to send command:', error);
+      // Error handling is done in the parent component
+    } finally {
+      setIsSending(false);
     }
-  };
+  }, [command, isSending, onSendCommand]);
 
-  const formatTimestamp = (timestamp: Date): string => {
+  const formatTimestamp = useCallback((timestamp: Date): string => {
+    if (!timestamp || !(timestamp instanceof Date)) {
+      return new Date().toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    }
+    
     return timestamp.toLocaleTimeString('en-US', {
       hour12: false,
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
     });
-  };
+  }, []);
 
-  const renderDataItem = (item: BLEData, index: number) => (
-    <View key={index} style={styles.dataItem}>
-      <View style={styles.dataHeader}>
-        <Text style={styles.timestamp}>{formatTimestamp(item.timestamp)}</Text>
-        <Text style={styles.dataValue}>{item.value}</Text>
+  const renderDataItem = useCallback((item: BLEData, index: number) => {
+    const getDataDisplay = (): React.ReactNode => {
+      if (item.parsed) {
+        if (item.parsed.type === 'water_data') {
+          return (
+            <View style={styles.parsedDataContainer}>
+              <Chip icon="cup" style={styles.waterChip}>
+                {formatWaterData(item.parsed)}
+              </Chip>
+            </View>
+          );
+        } else if (item.parsed.type === 'status') {
+          return (
+            <View style={styles.parsedDataContainer}>
+              <Chip icon="information" style={styles.statusChip}>
+                {formatStatusData(item.parsed)}
+              </Chip>
+            </View>
+          );
+        }
+      }
+      return <Text style={styles.dataValue}>{item.value}</Text>;
+    };
+
+    return (
+      <View key={`${item.timestamp.getTime()}-${index}`} style={styles.dataItem}>
+        <View style={styles.dataHeader}>
+          <Text style={styles.timestamp}>{formatTimestamp(item.timestamp)}</Text>
+          {getDataDisplay()}
+        </View>
+        {index < dataStream.length - 1 && <Divider style={styles.divider} />}
       </View>
-      {index < dataStream.length - 1 && <Divider style={styles.divider} />}
-    </View>
-  );
+    );
+  }, [dataStream.length, formatTimestamp]);
 
   return (
     <View style={styles.container}>
@@ -108,10 +156,11 @@ const BLEDataDisplay: React.FC<BLEDataDisplayProps> = ({
             <Button
               mode="contained"
               onPress={handleSendCommand}
-              disabled={!command.trim()}
+              disabled={!command.trim() || isSending}
+              loading={isSending}
               style={styles.sendButton}
             >
-              Send
+              {isSending ? 'Sending...' : 'Send'}
             </Button>
           </View>
         </Card.Content>
@@ -205,6 +254,16 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     minWidth: 80,
+  },
+  parsedDataContainer: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  waterChip: {
+    backgroundColor: '#E3F2FD',
+  },
+  statusChip: {
+    backgroundColor: '#F3E5F5',
   },
 });
 

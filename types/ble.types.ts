@@ -9,11 +9,13 @@ export type BLEConnectionState = 'idle' | 'scanning' | 'connecting' | 'connected
 export interface BLEData {
   timestamp: Date;
   value: string;
+  parsed?: import('../utils/dataParser').ParsedData;
 }
 
 export interface BLEError {
   code: string;
   message: string;
+  details?: unknown;
 }
 
 export interface BLEService {
@@ -26,3 +28,15 @@ export interface BLECharacteristic {
   properties: string[];
   value?: string;
 }
+
+// Event types for better type safety
+export type BLEEventMap = {
+  devicesUpdated: BLEDevice[];
+  stateChanged: BLEConnectionState;
+  dataReceived: BLEData;
+  error: BLEError | Error;
+  deviceConnected: { id: string; name?: string | null; rssi?: number | null };
+  deviceDisconnected: { id?: string; name?: string | null } | null;
+  batteryLevelReceived: number;
+  initialized: boolean;
+};

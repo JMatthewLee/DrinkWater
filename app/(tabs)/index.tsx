@@ -1,170 +1,272 @@
+/**
+ * Home Screen - Main water logging interface
+ */
+
 import React, { useState } from 'react';
 import {
   View,
   StyleSheet,
   ScrollView,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import {
-  Button,
   Card,
-  Title,
-  Paragraph,
+  Text,
+  Button,
+  TextInput as PaperTextInput,
+  useTheme,
   Snackbar,
 } from 'react-native-paper';
-import { useBLE } from '../hooks/useBLE';
-import BLEStatusIndicator from '../components/BLEStatusIndicator';
-import BLEDeviceList from '../components/BLEDeviceList';
-import BLEDataDisplay from '../components/BLEDataDisplay';
+import { useWaterTracking } from '../../context/WaterTrackingContext';
+import ProgressCircle from '../../components/water/ProgressCircle';
+import QuickAddButtons from '../../components/water/QuickAddButtons';
+import StreakCounter from '../../components/water/StreakCounter';
+import { getTodayProgress, getLogsForDate, formatAmount } from '../../utils/calculations';
 
-const MainScreen: React.FC = () => {
+const HomeScreen: React.FC = () => {
+  const theme = useTheme();
   const {
-    devices,
-    connectionState,
-    connectedDevice,
-    dataStream,
+    logs,
+    settings,
+    isLoading,
     error,
-    scanForDevices,
-    connectToDevice,
-    disconnect,
-    sendCommand,
+    addWaterLog,
+    updateWaterLog,
+    deleteWaterLog,
     clearError,
-    clearDataStream,
-  } = useBLE();
+    refreshData,
+  } = useWaterTracking();
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [customAmount, setCustomAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [showNoteInput, setShowNoteInput] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
 
-  const handleScanPress = async () => {
-    try {
-      await scanForDevices();
-    } catch (err) {
-      Alert.alert('Scan Error', 'Failed to start scanning for devices');
-    }
+  const todayProgress = getTodayProgress(logs, settings.dailyGoalMl);
+  const todayLogs = getLogsForDate(logs, new Date());
+  const recentLogs = todayLogs
+    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+    .slice(0, 5);
+
+  const handleQuickAdd = (amount: number) => {
+    addWaterLog(amount, undefined, 'manual');
+    setCustomAmount('');
+    setNote('');
+    setShowNoteInput(false);
   };
 
-  const handleDevicePress = async (deviceId: string) => {
-    try {
-      await connectToDevice(deviceId);
-    } catch (err) {
-      Alert.alert('Connection Error', 'Failed to connect to device');
+  const handleCustomAdd = () => {
+    const amount = parseFloat(customAmount);
+    if (isNaN(amount) || amount <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount');
+      return;
     }
+
+    addWaterLog(amount, note.trim() || undefined, 'manual');
+    setCustomAmount('');
+    setNote('');
+    setShowNoteInput(false);
   };
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await scanForDevices();
-    } catch (err) {
-      Alert.alert('Refresh Error', 'Failed to refresh device list');
-    } finally {
-      setIsRefreshing(false);
-    }
+  const handleGoalReached = () => {
+    setShowConfetti(true);
+    setTimeout(() => setShowConfetti(false), 3000);
   };
 
-  const handleDisconnect = async () => {
-    try {
-      await disconnect();
-    } catch (err) {
-      Alert.alert('Disconnect Error', 'Failed to disconnect from device');
-    }
+  const handleEditLog = (logId: string) => {
+    const log = logs.find(l => l.id === logId);
+    if (!log) return;
+
+    Alert.prompt(
+      'Edit Water Log',
+      'Enter new amount (ml):',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Save',
+          onPress: (text) => {
+            const amount = parseFloat(text || '0');
+            if (!isNaN(amount) && amount > 0) {
+              updateWaterLog(logId, amount, log.note);
+            }
+          },
+        },
+      ],
+      'plain-text',
+      log.amountMl.toString()
+    );
   };
 
-  const handleSendCommand = async (command: string) => {
-    try {
-      await sendCommand(command);
-    } catch (err) {
-      Alert.alert('Command Error', 'Failed to send command to device');
-    }
+  const handleDeleteLog = (logId: string) => {
+    Alert.alert(
+      'Delete Log',
+      'Are you sure you want to delete this water log?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteWaterLog(logId) },
+      ]
+    );
   };
-
-  const showScanButton = connectionState === 'idle' || connectionState === 'disconnected';
-  const showDeviceList = connectionState === 'scanning' || devices.length > 0;
-  const showDataDisplay = connectionState === 'connected';
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <Card style={styles.headerCard}>
+        {/* Progress Circle */}
+        <View style={styles.progressContainer}>
+          <ProgressCircle
+            currentMl={todayProgress.current}
+            goalMl={todayProgress.goal}
+            size={220}
+            strokeWidth={16}
+            unit={settings.unitPreference}
+            onGoalReached={handleGoalReached}
+          />
+        </View>
+
+        {/* Quick Add Buttons */}
+        <Card style={styles.card}>
           <Card.Content>
-            <Title style={styles.headerTitle}>ESP32 BLE Controller</Title>
-            <Paragraph style={styles.headerSubtitle}>
-              Connect to your ESP32 device and monitor real-time data
-            </Paragraph>
-            <BLEStatusIndicator
-              connectionState={connectionState}
-              deviceName={connectedDevice?.name}
+            <Text style={styles.sectionTitle}>Quick Add</Text>
+            <QuickAddButtons
+              amounts={settings.quickAddAmounts}
+              unit={settings.unitPreference}
+              onAdd={handleQuickAdd}
+              isLoading={isLoading}
             />
           </Card.Content>
         </Card>
 
-        {/* Scan Button */}
-        {showScanButton && (
-          <Card style={styles.actionCard}>
-            <Card.Content>
-              <Button
-                mode="contained"
-                onPress={handleScanPress}
-                style={styles.scanButton}
-                icon="bluetooth-search"
-              >
-                Scan for Devices
-              </Button>
-            </Card.Content>
-          </Card>
-        )}
+        {/* Custom Amount Input */}
+        <Card style={styles.card}>
+          <Card.Content>
+            <Text style={styles.sectionTitle}>Custom Amount</Text>
+            <PaperTextInput
+              label="Amount (ml)"
+              value={customAmount}
+              onChangeText={setCustomAmount}
+              keyboardType="numeric"
+              style={styles.amountInput}
+              right={
+                <PaperTextInput.Icon
+                  icon="plus"
+                  onPress={handleCustomAdd}
+                  disabled={!customAmount || isLoading}
+                />
+              }
+            />
+            
+            <Button
+              mode="outlined"
+              onPress={() => setShowNoteInput(!showNoteInput)}
+              style={styles.noteToggleButton}
+              icon={showNoteInput ? 'chevron-up' : 'chevron-down'}
+            >
+              Add Note
+            </Button>
 
-        {/* Device List */}
-        {showDeviceList && (
-          <Card style={styles.listCard}>
-            <Card.Content>
-              <Title style={styles.sectionTitle}>Available Devices</Title>
-              <BLEDeviceList
-                devices={devices}
-                connectionState={connectionState}
-                onDevicePress={handleDevicePress}
-                onRefresh={handleRefresh}
-                isRefreshing={isRefreshing}
+            {showNoteInput && (
+              <PaperTextInput
+                label="Note (optional)"
+                value={note}
+                onChangeText={setNote}
+                multiline
+                style={styles.noteInput}
               />
-            </Card.Content>
-          </Card>
-        )}
+            )}
 
-        {/* Connected Device Actions */}
-        {showDataDisplay && (
-          <Card style={styles.actionCard}>
-            <Card.Content>
-              <View style={styles.connectedActions}>
-                <Button
-                  mode="outlined"
-                  onPress={handleDisconnect}
-                  style={styles.disconnectButton}
-                  icon="bluetooth-off"
-                >
-                  Disconnect
-                </Button>
-                <Button
-                  mode="outlined"
-                  onPress={clearDataStream}
-                  style={styles.clearButton}
-                  icon="delete-sweep"
-                >
-                  Clear Data
-                </Button>
+            <Button
+              mode="contained"
+              onPress={handleCustomAdd}
+              disabled={!customAmount || isLoading}
+              style={styles.addButton}
+            >
+              Log Water
+            </Button>
+          </Card.Content>
+        </Card>
+
+        {/* Streak Counter */}
+        <Card style={styles.card}>
+          <Card.Content>
+            <StreakCounter
+              currentStreak={settings.currentStreak}
+              longestStreak={settings.longestStreak}
+            />
+          </Card.Content>
+        </Card>
+
+        {/* Recent Logs */}
+        <Card style={styles.card}>
+          <Card.Content>
+            <View style={styles.recentLogsHeader}>
+              <Text style={styles.sectionTitle}>Today's Logs</Text>
+              <Text style={styles.logCount}>
+                {todayLogs.length} log{todayLogs.length !== 1 ? 's' : ''}
+              </Text>
+            </View>
+            
+            {recentLogs.length > 0 ? (
+              recentLogs.map((log) => (
+                <View key={log.id} style={styles.logItem}>
+                  <View style={styles.logContent}>
+                    <Text style={styles.logAmount}>
+                      {formatAmount(log.amountMl, settings.unitPreference)}
+                    </Text>
+                    <Text style={styles.logTime}>
+                      {log.timestamp.toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        hour12: true,
+                      })}
+                    </Text>
+                    {log.note && (
+                      <Text style={styles.logNote}>{log.note}</Text>
+                    )}
+                  </View>
+                  <View style={styles.logActions}>
+                    <Button
+                      mode="text"
+                      onPress={() => handleEditLog(log.id)}
+                      compact
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      mode="text"
+                      onPress={() => handleDeleteLog(log.id)}
+                      textColor={theme.colors.error}
+                      compact
+                    >
+                      Delete
+                    </Button>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>
+                  No water logged today yet
+                </Text>
+                <Text style={styles.emptySubtext}>
+                  Start by adding some water!
+                </Text>
               </View>
-            </Card.Content>
-          </Card>
-        )}
-
-        {/* Data Display */}
-        {showDataDisplay && (
-          <BLEDataDisplay
-            dataStream={dataStream}
-            onSendCommand={handleSendCommand}
-            onClearData={clearDataStream}
-          />
-        )}
+            )}
+          </Card.Content>
+        </Card>
       </ScrollView>
+
+      {/* Confetti Animation Placeholder */}
+      {showConfetti && (
+        <View style={styles.confettiContainer}>
+          <Text style={styles.confettiText}>🎉 Goal Reached! 🎉</Text>
+        </View>
+      )}
 
       {/* Error Snackbar */}
       <Snackbar
@@ -175,67 +277,121 @@ const MainScreen: React.FC = () => {
       >
         {error}
       </Snackbar>
-    </View>
+    </KeyboardAvoidingView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#f9fafb',
   },
   scrollView: {
     flex: 1,
   },
-  headerCard: {
-    margin: 16,
-    marginBottom: 8,
-    elevation: 2,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
+  progressContainer: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    backgroundColor: '#ffffff',
     marginBottom: 8,
   },
-  headerSubtitle: {
-    fontSize: 14,
-    textAlign: 'center',
-    color: '#757575',
-    marginBottom: 16,
-  },
-  actionCard: {
+  card: {
     marginHorizontal: 16,
-    marginBottom: 8,
-    elevation: 2,
-  },
-  scanButton: {
-    marginVertical: 8,
-  },
-  connectedActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    gap: 16,
-  },
-  disconnectButton: {
-    flex: 1,
-  },
-  clearButton: {
-    flex: 1,
-  },
-  listCard: {
-    marginHorizontal: 16,
-    marginBottom: 8,
+    marginVertical: 4,
     elevation: 2,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  amountInput: {
+    marginBottom: 8,
+  },
+  noteToggleButton: {
+    marginBottom: 8,
+  },
+  noteInput: {
     marginBottom: 16,
   },
+  addButton: {
+    marginTop: 8,
+  },
+  recentLogsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  logCount: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  logItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  logContent: {
+    flex: 1,
+  },
+  logAmount: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  logTime: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  logNote: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  logActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#9ca3af',
+  },
+  confettiContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confettiText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
   snackbar: {
-    backgroundColor: '#F44336',
+    backgroundColor: '#ef4444',
   },
 });
 
-export default MainScreen;
+export default HomeScreen;

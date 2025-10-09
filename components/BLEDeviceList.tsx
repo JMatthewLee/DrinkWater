@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   FlatList,
   View,
   StyleSheet,
   RefreshControl,
   Alert,
+  ListRenderItem,
 } from 'react-native';
 import {
   Card,
@@ -15,13 +16,13 @@ import {
   Text,
   IconButton,
 } from 'react-native-paper';
-import { BLEDevice } from '../types/ble.types';
+import { BLEDevice, BLEConnectionState } from '../types/ble.types';
 
 interface BLEDeviceListProps {
   devices: BLEDevice[];
-  connectionState: string;
-  onDevicePress: (deviceId: string) => void;
-  onRefresh: () => void;
+  connectionState: BLEConnectionState;
+  onDevicePress: (deviceId: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
   isRefreshing: boolean;
 }
 
@@ -34,34 +35,41 @@ const BLEDeviceList: React.FC<BLEDeviceListProps> = ({
 }) => {
   const [connectingDeviceId, setConnectingDeviceId] = useState<string | null>(null);
 
-  const handleDevicePress = async (deviceId: string) => {
+  const handleDevicePress = useCallback(async (deviceId: string): Promise<void> => {
+    if (connectingDeviceId) return; // Prevent multiple simultaneous connections
+    
     try {
       setConnectingDeviceId(deviceId);
       await onDevicePress(deviceId);
     } catch (error) {
-      Alert.alert('Connection Error', 'Failed to connect to device');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to connect to device';
+      Alert.alert('Connection Error', errorMessage);
     } finally {
       setConnectingDeviceId(null);
     }
-  };
+  }, [connectingDeviceId, onDevicePress]);
 
-  const getSignalStrengthIcon = (rssi: number): string => {
-    if (rssi > -50) return 'signal-cellular-4';
-    if (rssi > -60) return 'signal-cellular-3';
-    if (rssi > -70) return 'signal-cellular-2';
-    if (rssi > -80) return 'signal-cellular-1';
-    return 'signal-cellular-0';
-  };
+  const signalStrengthConfig = useMemo(() => {
+    const getSignalStrengthIcon = (rssi: number): string => {
+      if (rssi > -50) return 'signal-4';
+      if (rssi > -60) return 'signal-3';
+      if (rssi > -70) return 'signal-2';
+      if (rssi > -80) return 'signal-1';
+      return 'signal-0';
+    };
 
-  const getSignalStrengthColor = (rssi: number): string => {
-    if (rssi > -50) return '#4CAF50';
-    if (rssi > -60) return '#8BC34A';
-    if (rssi > -70) return '#FFC107';
-    if (rssi > -80) return '#FF9800';
-    return '#F44336';
-  };
+    const getSignalStrengthColor = (rssi: number): string => {
+      if (rssi > -50) return '#4CAF50';
+      if (rssi > -60) return '#8BC34A';
+      if (rssi > -70) return '#FFC107';
+      if (rssi > -80) return '#FF9800';
+      return '#F44336';
+    };
 
-  const renderDevice = ({ item }: { item: BLEDevice }) => {
+    return { getSignalStrengthIcon, getSignalStrengthColor };
+  }, []);
+
+  const renderDevice: ListRenderItem<BLEDevice> = useCallback(({ item }) => {
     const isConnecting = connectingDeviceId === item.id;
     const canConnect = connectionState === 'idle' || connectionState === 'scanning';
 
@@ -75,8 +83,8 @@ const BLEDeviceList: React.FC<BLEDeviceListProps> = ({
             </View>
             <View style={styles.signalInfo}>
               <IconButton
-                icon={getSignalStrengthIcon(item.rssi)}
-                iconColor={getSignalStrengthColor(item.rssi)}
+                icon={signalStrengthConfig.getSignalStrengthIcon(item.rssi)}
+                iconColor={signalStrengthConfig.getSignalStrengthColor(item.rssi)}
                 size={20}
               />
               <Text style={styles.rssiText}>{item.rssi} dBm</Text>
@@ -96,9 +104,9 @@ const BLEDeviceList: React.FC<BLEDeviceListProps> = ({
         </Card.Actions>
       </Card>
     );
-  };
+  }, [connectingDeviceId, connectionState, signalStrengthConfig, handleDevicePress]);
 
-  const renderEmptyState = () => (
+  const renderEmptyState = useCallback(() => (
     <View style={styles.emptyContainer}>
       <IconButton
         icon="bluetooth-off"
@@ -110,14 +118,14 @@ const BLEDeviceList: React.FC<BLEDeviceListProps> = ({
         Make sure your ESP32 device is powered on and in range
       </Text>
     </View>
-  );
+  ), []);
 
-  const renderLoadingState = () => (
+  const renderLoadingState = useCallback(() => (
     <View style={styles.loadingContainer}>
       <ActivityIndicator size="large" />
       <Text style={styles.loadingText}>Scanning for devices...</Text>
     </View>
-  );
+  ), []);
 
   if (connectionState === 'scanning' && devices.length === 0) {
     return renderLoadingState();

@@ -27,6 +27,9 @@
 // Command Characteristic (WRITE)
 #define COMMAND_CHARACTERISTIC_UUID "c1721d4d-970a-4037-956b-cf655b0cd5ef"
 
+// Battery Level Characteristic (READ + NOTIFY)
+#define BATTERY_CHARACTERISTIC_UUID "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
 // LED Timing Constants
 #define LED_BLINK_ON_MS 200
 #define LED_BLINK_OFF_MS 200

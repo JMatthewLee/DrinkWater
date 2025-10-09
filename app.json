@@ -1,21 +1,21 @@
 {
   "expo": {
-    "extra": {
-      "eas": {
-        "projectId": "db20855d-c035-4dc3-888a-2f050bfef1eb"
+    "name": "DrinkWater",
+    "slug": "drinkwater",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "drinkwater",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app needs Bluetooth to connect to your water tracking device",
+        "NSBluetoothPeripheralUsageDescription": "This app needs Bluetooth to connect to your water tracking device"
       }
     },
-    "owner": "zennicy",
-    "plugins": [
-      [
-        "react-native-ble-plx",
-        {
-          "isBackgroundEnabled": false,
-          "modes": ["peripheral", "central"],
-          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
-        }
-      ]
-    ],
     "android": {
       "permissions": [
         "BLUETOOTH",
@@ -25,11 +25,22 @@
         "ACCESS_FINE_LOCATION"
       ]
     },
-    "ios": {
-      "infoPlist": {
-        "NSBluetoothAlwaysUsageDescription": "This app needs Bluetooth to connect to your water tracking device",
-        "NSBluetoothPeripheralUsageDescription": "This app needs Bluetooth to connect to your water tracking device"
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
+        }
+      ],
+      "expo-dev-client"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "db20855d-c035-4dc3-888a-2f050bfef1eb"
       }
-    }
+    },
+    "owner": "zennicy"
   }
 }

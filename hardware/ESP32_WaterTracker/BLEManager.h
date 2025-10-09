@@ -14,6 +14,7 @@ private:
     BLEService* pService;
     BLECharacteristic* pWaterCharacteristic;
     BLECharacteristic* pCommandCharacteristic;
+    BLECharacteristic* pBatteryCharacteristic;
     bool deviceConnected;
     bool oldDeviceConnected;
     
@@ -33,6 +34,7 @@ public:
         pService = nullptr;
         pWaterCharacteristic = nullptr;
         pCommandCharacteristic = nullptr;
+        pBatteryCharacteristic = nullptr;
         deviceConnected = false;
         oldDeviceConnected = false;
     }
@@ -74,6 +76,16 @@ public:
         );
         pCommandCharacteristic->setCallbacks(new CommandCallbacks(this));
         
+        // Create Battery Level Characteristic (READ + NOTIFY)
+        pBatteryCharacteristic = pService->createCharacteristic(
+            BATTERY_CHARACTERISTIC_UUID,
+            BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        );
+        pBatteryCharacteristic->addDescriptor(new BLE2902());
+        
+        // Set initial battery level
+        pBatteryCharacteristic->setValue("100");
+        
         // Start the service
         pService->start();
         
@@ -89,6 +101,19 @@ public:
         Serial.println("Device name: " + String(DEVICE_NAME));
         Serial.println("Service UUID: " + String(SERVICE_UUID));
         Serial.println("Looking for 'WaterTracker' in BLE scanner apps");
+    }
+    
+    /**
+     * Update battery level
+     * @param level Battery level (0-100)
+     */
+    void updateBatteryLevel(int level) {
+        if (deviceConnected && pBatteryCharacteristic) {
+            String batteryStr = String(level);
+            pBatteryCharacteristic->setValue(batteryStr.c_str());
+            pBatteryCharacteristic->notify();
+            Serial.println("Battery level updated: " + batteryStr + "%");
+        }
     }
     
     /**

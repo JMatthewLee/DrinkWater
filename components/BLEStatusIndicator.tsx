@@ -1,86 +1,73 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Badge, Text } from 'react-native-paper';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  interpolateColor,
-} from 'react-native-reanimated';
 import { BLEConnectionState } from '../types/ble.types';
 
 interface BLEStatusIndicatorProps {
   connectionState: BLEConnectionState;
   deviceName?: string | null;
+  batteryLevel?: number | null;
 }
 
 const BLEStatusIndicator: React.FC<BLEStatusIndicatorProps> = ({
   connectionState,
   deviceName,
+  batteryLevel,
 }) => {
-  const animatedValue = useSharedValue(0);
-
-  React.useEffect(() => {
-    const getValueForState = (state: BLEConnectionState): number => {
+  const statusConfig = useMemo(() => {
+    const getStatusColor = (state: BLEConnectionState): string => {
       switch (state) {
-        case 'idle': return 0;
-        case 'scanning': return 1;
-        case 'connecting': return 2;
-        case 'connected': return 3;
-        case 'disconnected': return 4;
-        default: return 0;
+        case 'idle': return '#757575';
+        case 'scanning': return '#2196F3';
+        case 'connecting': return '#FF9800';
+        case 'connected': return '#4CAF50';
+        case 'disconnected': return '#F44336';
+        default: return '#757575';
       }
     };
 
-    animatedValue.value = withTiming(getValueForState(connectionState), {
-      duration: 300,
-    });
-  }, [connectionState, animatedValue]);
+    const getStatusText = (state: BLEConnectionState): string => {
+      switch (state) {
+        case 'idle': return 'Idle';
+        case 'scanning': return 'Scanning...';
+        case 'connecting': return 'Connecting...';
+        case 'connected': {
+          const baseText = deviceName ? `Connected to ${deviceName}` : 'Connected';
+          return batteryLevel !== null ? `${baseText} (${batteryLevel}%)` : baseText;
+        }
+        case 'disconnected': return 'Disconnected';
+        default: return 'Unknown';
+      }
+    };
 
-  const animatedStyle = useAnimatedStyle(() => {
-    const backgroundColor = interpolateColor(
-      animatedValue.value,
-      [0, 1, 2, 3, 4],
-      ['#757575', '#2196F3', '#FF9800', '#4CAF50', '#F44336']
-    );
+    const getStatusIcon = (state: BLEConnectionState): string => {
+      switch (state) {
+        case 'idle': return 'bluetooth-off';
+        case 'scanning': return 'bluetooth-searching';
+        case 'connecting': return 'bluetooth-searching';
+        case 'connected': return 'bluetooth-connected';
+        case 'disconnected': return 'bluetooth-off';
+        default: return 'bluetooth-off';
+      }
+    };
 
     return {
-      backgroundColor,
+      color: getStatusColor(connectionState),
+      text: getStatusText(connectionState),
+      icon: getStatusIcon(connectionState),
     };
-  });
-
-  const getStatusText = (state: BLEConnectionState): string => {
-    switch (state) {
-      case 'idle': return 'Idle';
-      case 'scanning': return 'Scanning...';
-      case 'connecting': return 'Connecting...';
-      case 'connected': return deviceName ? `Connected to ${deviceName}` : 'Connected';
-      case 'disconnected': return 'Disconnected';
-      default: return 'Unknown';
-    }
-  };
-
-  const getStatusIcon = (state: BLEConnectionState): string => {
-    switch (state) {
-      case 'idle': return 'bluetooth-off';
-      case 'scanning': return 'bluetooth-searching';
-      case 'connecting': return 'bluetooth-connecting';
-      case 'connected': return 'bluetooth-connected';
-      case 'disconnected': return 'bluetooth-off';
-      default: return 'bluetooth-off';
-    }
-  };
+  }, [connectionState, deviceName, batteryLevel]);
 
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.indicator, animatedStyle]}>
+      <View style={[styles.indicator, { backgroundColor: statusConfig.color }]}>
         <Badge
-          icon={getStatusIcon(connectionState)}
+          icon={statusConfig.icon}
           style={styles.badge}
         >
-          <Text style={styles.text}>{getStatusText(connectionState)}</Text>
+          <Text style={styles.text}>{statusConfig.text}</Text>
         </Badge>
-      </Animated.View>
+      </View>
     </View>
   );
 };
