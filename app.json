@@ -19,16 +19,21 @@
       "bundleIdentifier": "com.zennicy.drinkwater"
     },
     "android": {
+      "package": "com.zennicy.watertracker",
+      "versionCode": 1,
       "permissions": [
         "BLUETOOTH",
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_CONNECT",
         "BLUETOOTH_SCAN",
         "ACCESS_FINE_LOCATION",
-        "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT"
-      ]
+        "ACCESS_COARSE_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ],
+      
     },
     "plugins": [
       [
@@ -36,13 +41,13 @@
         {
           "isBackgroundEnabled": false,
           "modes": [
-            "peripheral",
             "central"
           ],
-          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to your water tracking device"
         }
       ],
-      "expo-dev-client"
+      "expo-dev-client",
+      "expo-font"
     ],
     "extra": {
       "eas": {

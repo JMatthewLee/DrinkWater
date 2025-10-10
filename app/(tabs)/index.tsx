@@ -21,7 +21,7 @@ import {
 } from 'react-native-paper';
 import { useWaterTracking } from '../../context/WaterTrackingContext';
 import { useBLE } from '../../hooks/useBLE';
-import { config } from '../../config';
+import { SUPABASE_CONFIG, BLE_CONFIG } from '../../config/supabase';
 import ProgressCircle from '../../components/water/ProgressCircle';
 import QuickAddButtons from '../../components/water/QuickAddButtons';
 import StreakCounter from '../../components/water/StreakCounter';
@@ -53,8 +53,8 @@ const HomeScreen: React.FC = () => {
 
   const ble = useBLE({
     onWaterMl: handleWaterReading,
-    serviceUUID: config.ble.serviceUUID,
-    waterCharacteristicUUID: config.ble.WATER_CHARACTERISTIC_UUID,
+    serviceUUID: BLE_CONFIG.serviceUUID,
+    waterCharacteristicUUID: BLE_CONFIG.WATER_CHARACTERISTIC_UUID,
   });
 
   const todayProgress = getTodayProgress(logs, settings.dailyGoalMl);
@@ -99,7 +99,7 @@ const HomeScreen: React.FC = () => {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Save',
-          onPress: (text) => {
+          onPress: (text: string | undefined) => {
             const amount = parseFloat(text || '0');
             if (!isNaN(amount) && amount > 0) {
               updateWaterLog(logId, amount, log.note);

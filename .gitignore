@@ -52,6 +52,7 @@ captures/
 .cxx/
 *.jks
 *.keystore
+android/
 
 # iOS
 *.ipa

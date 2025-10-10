@@ -70,17 +70,15 @@ export function useBLE(options: UseBLEOptions): UseBLEReturn {
   const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
-    // Guard: react-native-ble-plx requires a native module that is NOT present in Expo Go.
-    // On unsupported environments, surface a helpful error and do not instantiate BleManager.
-    const hasNativeBLE = Boolean((NativeModules as unknown as { BleClientManager?: unknown }).BleClientManager);
-    if (!hasNativeBLE) {
-      setError('Bluetooth not available in this build. Install a Development Build (expo-dev-client) to use BLE.');
+    // Try to create BleManager; if it fails, surface a friendly error.
+    try {
+      managerRef.current = new BleManager();
+    } catch (e: any) {
+      setError(e?.message || 'Bluetooth module not available. Ensure this APK includes native BLE.');
       return () => {
         isMountedRef.current = false;
       };
     }
-
-    managerRef.current = new BleManager();
     const sub = managerRef.current.onStateChange((state: State) => {
       if (!isMountedRef.current) return;
       if (state === 'PoweredOn') setConnectionState('idle');
@@ -98,17 +96,58 @@ export function useBLE(options: UseBLEOptions): UseBLEReturn {
     };
   }, []);
 
-  const requestPermissions = useCallback(async () => {
-    if (Platform.OS !== 'android') return;
+  const requestPermissions = useCallback(async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
+    
     try {
-      const permissions = [
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      ];
-      await PermissionsAndroid.requestMultiple(permissions);
+      // Check Android API level for permission requirements
+      const apiLevel = Platform.Version as number;
+      
+      // For Android 12+ (API 31+), we need the new Bluetooth permissions
+      if (apiLevel >= 31) {
+        const permissions = [
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        ];
+        
+        const results = await PermissionsAndroid.requestMultiple(permissions);
+        
+        // Check if all permissions were granted
+        const allGranted = Object.values(results).every(result => result === PermissionsAndroid.RESULTS.GRANTED);
+        
+        if (!allGranted) {
+          Alert.alert(
+            'Bluetooth Permissions Required',
+            'This app needs Bluetooth permissions to connect to your water tracking device. Please enable them in Settings.',
+            [{ text: 'OK' }]
+          );
+          return false;
+        }
+      } else {
+        // For older Android versions, request legacy permissions
+        const permissions = [
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        ];
+        
+        const results = await PermissionsAndroid.requestMultiple(permissions);
+        const allGranted = Object.values(results).every(result => result === PermissionsAndroid.RESULTS.GRANTED);
+        
+        if (!allGranted) {
+          Alert.alert(
+            'Bluetooth Permissions Required',
+            'This app needs Bluetooth permissions to connect to your water tracking device. Please enable them in Settings.',
+            [{ text: 'OK' }]
+          );
+          return false;
+        }
+      }
+      
+      return true;
     } catch (e) {
+      console.error('Failed to request Bluetooth permissions:', e);
       setError('Failed to request Bluetooth permissions');
+      return false;
     }
   }, []);
 
@@ -117,10 +156,16 @@ export function useBLE(options: UseBLEOptions): UseBLEReturn {
     setError(null);
     setDevices([]);
     setConnectionState('scanning');
-    await requestPermissions();
+    
+    const hasPermissions = await requestPermissions();
+    if (!hasPermissions) {
+      setConnectionState('idle');
+      return;
+    }
 
     try {
-      managerRef.current.startDeviceScan([serviceUUID], { allowDuplicates: false }, (err, device) => {
+      // Use no service filter to ensure we see devices even if the UUID is mismatched
+      managerRef.current.startDeviceScan(null, { allowDuplicates: false }, (err, device) => {
         if (!isMountedRef.current) return;
         if (err) {
           setError(err.message);
@@ -150,12 +195,19 @@ export function useBLE(options: UseBLEOptions): UseBLEReturn {
       setError(e?.message || 'Failed to start scanning');
       setConnectionState('idle');
     }
-  }, [requestPermissions]);
+  }, [requestPermissions, serviceUUID]);
 
   const connectToDevice = useCallback(async (id: string) => {
     if (!managerRef.current) return;
     setError(null);
     setConnectionState('connecting');
+    
+    const hasPermissions = await requestPermissions();
+    if (!hasPermissions) {
+      setConnectionState('idle');
+      return;
+    }
+    
     try {
       const device = await managerRef.current.connectToDevice(id, { autoConnect: false, timeout: 15000 });
       await device.discoverAllServicesAndCharacteristics();
@@ -200,7 +252,7 @@ export function useBLE(options: UseBLEOptions): UseBLEReturn {
       setError(e?.message || 'Failed to connect');
       setConnectionState('disconnected');
     }
-  }, [onWaterMl, serviceUUID, waterCharacteristicUUID]);
+  }, [onWaterMl, serviceUUID, waterCharacteristicUUID, requestPermissions]);
 
   const disconnect = useCallback(async () => {
     if (!managerRef.current) return;
